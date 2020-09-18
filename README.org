@@ -1,0 +1,63 @@
+#+title: cppzmq houses
+#+author: Brett Viren
+#+email: brett.viren@gmail.com
+#+subtitle: ZeroMQ security with cppzmq
+
+* Goal
+
+Develop an idiomatic ~cppzmq~ version of the ZeroMQ security examples
+("houses") and produce a helper library in the form of a C++ header
+file.
+
+Do this development by deconstructing the CZMQ's ~zauth~ actor and
+relevant library functions at CZMQ and ~libzmq~ levels and then
+reconstruct equivalent forms based on ~cppzmq~.
+
+* Deconstruction
+
+- Pieter's ZeroMQ Security blog entry, parts [[http://hintjens.com/blog:48][1]] and [[http://hintjens.com/blog:49][2]].  Note the example code here is written in a dialect of CZMQ no longer spoken.
+- ZeroMQ Authentication Protocol [[https://rfc.zeromq.org/spec/27/][27/ZQP RFC]]
+- Related cppzmq GitHub [[https://github.com/zeromq/cppzmq/issues/409][issue 409]].
+- [[https://github.com/zeromq/czmq/tree/master/examples/security][CZMQ examples]] making use of CZMQ's [[http://czmq.zeromq.org/manual:zauth][zauth]] actor
+- [[https://developer.ibm.com/tutorials/se-distributed-apps-zeromq-part2/#zeromq-authentication-protocol-zap-][IBM article]] and [[https://github.com/danielrobbins/ibm-dw-zeromq-2][GitHub repo]] with Python code
+- [[https://zeromq.github.io/zmqpp/classzmqpp_1_1auth.html][zmqpp::auth]] class and [[https://github.com/zeromq/zmqpp/blob/develop/src/zmqpp/auth.cpp][source]].  zmqpp has this, why am I redoing it in cppzmq?
+
+Summary of the example security models:
+
+| model      | encryption | authentication       | mechanism |
+|------------+------------+----------------------+-----------+
+| grasslands | none       | none                 | NULL      |
+| strawhouse | none       | IP ACL               | NULL      |
+| woodhouse  | none       | plain-text user/pass | PLAIN     |
+| stonehouse | CURVE      | certs, server auth   | CURVE     |
+| ironhouse  | CURVE      | certs, 2-way auth    | CURVE     |
+
+Go through each model.  The same caveats given in the blog apply.
+Real code needs real error handling.
+
+** 27/ZAP
+
+The core of ZeroMQ security is a *protocol* described in [[https://rfc.zeromq.org/spec/27/domain][27/ZAP RFC]].  It
+*requires* an ~inproc://zeromq.zap.01~ bound by a "handler" component and
+connected by one or more "server" components.  In ~libzmq~ setting the
+~ZMQ_ZAP_DOMAIN~ socket option then enables ZAP and the socket will
+automagically talk to the "handler" via ZAP messages.
+
+** Grasslands 
+
+This the non-security security example.  Here is a port to ~cppzmq~.
+
+#+include: grasslands.cpp src c++
+
+** Strawhouse
+
+This example adds an ACL based on the remote IP address by using
+ZeroMQ Authentication Protocol (ZAP).  As ZAP requires an ~inproc://~
+connection to a "handler", it (effectively) requires that handler to
+run in a thread separate from that running the "server".
+
+The CZMQ version introduces the ~zauth~ "actor" which provides a ZAP
+handler.  ~cppzmq~ does not provide and actor pattern and some ideas for
+one were explored in [[https://github.com/zeromq/cppzmq/pull/392][PR 392]].
+
+#+include: strawhouse.cpp src c++
