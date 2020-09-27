@@ -1,0 +1,141 @@
+#+title: cppzmq houses
+#+author: Brett Viren
+#+email: brett.viren@gmail.com
+#+subtitle: ZeroMQ security with cppzmq
+#+OPTIONS:   H:4 num:nil toc:2
+#+SETUPFILE: setup/theme-readtheorg-local.setup
+#+HTML_HEAD: <style> #content{max-width:1800px;}</style>
+#+HTML_HEAD: <style> p{max-width:800px;}</style>
+#+HTML_HEAD: <style> li{max-width:800px;}</style>
+#+LINK: api http://api.zeromq.org/master:%s
+#+MACRO: zman [[http://api.zeromq.org/master:$1][~$1($2)~]]
+#+MACRO: czman [[http://czmq.zeromq.org/czmq4-0:$1][~$1($2)~]]
+
+* Introduction
+
+Here we tour ZeroMQ Authentication Protocol (ZAP) and explore how to
+use it to provide security to applications that are based on ~cppzmq~.
+Previously, we took a [[https://brettviren.github.io/cppzmq-tour][tour of cppzmq basics]] and so there is no need to
+retread those steps here.
+
+Instead, our current tour starts with the overview section below.
+There we will learn about how our application may use and satisfy the
+protocol according to the [[https://rfc.zeromq.org/spec/27/][27/ZAP RFC]].
+
+With the concepts understood, the remaining steps of the tour will
+walk the path first described by Pieter's ZeroMQ Security blog entries
+(parts [[http://hintjens.com/blog:48][1]] and [[http://hintjens.com/blog:49][2]]).  In these, a series of "houses" are described.  Each
+provide a metaphor for a different level and type of security.  
+
+As we will learn more about, central to implementing ZAP is an
+application-provided authentication /agent/ which runs concurrently with
+and inside the application.  The original "houses" from the blog have
+been updated and available as the [[https://github.com/zeromq/czmq/tree/master/examples/security][CZMQ examples]] and they make use of
+CZMQ's [[http://czmq.zeromq.org/manual:zauth][zauth]] actor as the ZAP agent.  In C++, we may already develop
+applications on top of ~zmqpp~ and to make use of the [[https://zeromq.github.io/zmqpp/classzmqpp_1_1auth.html][zmqpp::auth]] class.
+In Python we may rely on PyZMQ's [[https://pyzmq.readthedocs.io/en/latest/api/zmq.auth.html][zmq.auth]] module.
+
+This path is clearly well trodden.  However, as the past work hints,
+the implementation of the agent is closely to the programming paradigm
+followed by the application.  For C++ we may already follow ~zmqpp~ path
+but ZeroMQ community has yet (?) to walk this path with ~cppzmq~ in hand
+(see [[https://github.com/zeromq/cppzmq/issues/409][issue 409]]).  And thus, this tour hopes to close that ticket by
+providing some formula to clean the houses on this path using ~cppzmq~.
+
+* Overview
+
+If you are like me, ZAP seemed mysterious even after reading the CZMQ
+example "houses".  I could see how things worked at the code level but
+there was still some magic.  
+
+It was only until reading the relevant ZeroMQ RFCs did the overall
+picture become clear.  Like all ZeroMQ RFCs, the ones relevant here
+are easy to read and understand.  You are encouraged to stop now and
+read them as what is repeated here is just a summary.
+
+** 27/ZAP
+
+The [[https://rfc.zeromq.org/spec/27/][27/ZAP]] RFC describes the ZeroMQ authentication protocol itself.
+This is core to understand as we must actually implement this protocol
+at the application level (hopefully in some reusable manner).  
+
+This protocol defines an authentication request message which our
+application must receive and the schema of the required reply message.
+At first, it seems that there is a [[https://en.wikipedia.org/wiki/Catch-22][catch-22]] here.  We want to send
+secure messages but we must send messages to provide security.  This
+paradox is broken by the 27/ZAP *requiring* that these messages are sent
+over ~inproc://~.  That is, ZAP messages *must* be sent over a transport
+within our process.  If we can't trust our own code (~*cough*~) then
+what can we trust?
+
+Furthermore, our agent may not use just any ~inproc://~ address but it
+*must* provide a REP (or ROUTER) socket bound to the specific address
+~inproc://zeromq.zap.01~.  This "hard-wired" address means our agent
+effectively implements the [[https://en.wikipedia.org/wiki/Singleton_pattern][Singleton]] pattern.  There shall be only
+one.  In other frameworks, this pattern might be accomplished by
+registering a callback with some kind of framework service.
+
+** ZMTP/ZAP collusion
+
+Reading 27/ZAP, it's very clear how an application may explicitly
+query the authentication agent via ZAP but that's not typically what
+we want to do (however see "airhouse").  We want our various ZeroMQ
+sockets to magically honor whatever our agent deems proper.  27/ZAP
+does not specify (and rightly so) how that should work.
+
+The hard-wired agent address and the brief sub-section [[https://rfc.zeromq.org/spec/27/#zmtp-30-compatibility][ZMTP 3.0
+compatibility]] give hints.  The low-level socket implementation in
+~libzmq~ must somehow know to "reach out" to the agent based on
+something our application configures and also somehow on low-level
+ZeroMQ message information.
+
+Indeed, the [[https://rfc.zeromq.org/spec/23/#authentication-and-confidentiality][23/ZMTP section on authentication and confidentiality]]
+talks about the same NULL, PLAIN and CURVE mechanisms that ZAP uses.
+Based on the content of the ZMTP messages, the ZAP agent will be
+queried by the low-level ~libzmq~ implementation.
+
+And, the ZMTP messages will have ZAP related content based on what
+options our application sets on our sockets.  We will see examples of
+setting these options in the "houses".
+
+** The houses.
+
+Enough overview, we will now move on to actual examples of the
+traditional ZeroMQ "houses" implemented in ~cppzmq~ plus one new one.
+For each we will explore different implementations of the agent.
+
+| house |                         | code           |
+| type  | security mechanism      | pattern        |
+|-------+-------------------------+----------------|
+| grass | none                    | none           |
+| straw | IP address ACL          | inline lambda  |
+| wood  | user/pass               |                |
+| stone | server cert, encryption |                |
+| iron  | client cert, encryption |                |
+| air   | proxy for HTTP          | explicit query |
+|-------+-------------------------+----------------|
+
+
+** Grasslands 
+
+This is the non-security security example.  It's so non-security it is
+not even a house.  It is a trusting grass land where everything is
+open.  Here is a port to ~cppzmq~.
+
+#+include: grasslands.cpp src c++
+
+** Strawhouse
+
+This example adds an ACL based on the remote IP address by using
+ZeroMQ Authentication Protocol (ZAP).  As ZAP requires an ~inproc://~
+connection to a "handler", it (effectively) requires that handler to
+run in a thread separate from that running the "server".
+
+The CZMQ version introduces the ~zauth~ "actor" which provides a ZAP
+handler.  ~cppzmq~ does not provide and actor pattern and some ideas for
+one were explored in [[https://github.com/zeromq/cppzmq/pull/392][PR 392]].
+
+#+include: strawhouse.cpp src c++
+
+
+** Airhouse
