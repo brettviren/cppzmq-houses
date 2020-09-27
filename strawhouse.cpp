@@ -7,8 +7,6 @@
 // This is a "hard-wired" value shared with libzma internals
 #define ZAP_ENDPOINT  "inproc://zeromq.zap.01"
 
-
-
 int main(void)
 {
     zmq::context_t ctx;
@@ -72,8 +70,8 @@ int main(void)
 
     std::cerr << "starting client\n";
     zmq::socket_t client(ctx, zmq::socket_type::pull);
-    client.connect(addr);
     client.set(zmq::sockopt::zap_domain, "global");
+    client.connect(addr);
     
     std::cerr << "server send:\n";
     auto res = server.send(zmq::str_buffer("hello"), zmq::send_flags::none);
@@ -91,7 +89,8 @@ int main(void)
     zapkiller.connect(ZAP_ENDPOINT);
     zmq::message_t empty;
     zapkiller.send(empty, zmq::send_flags::none);
-    zapkiller.recv(empty, zmq::recv_flags::none);
+    res = zapkiller.recv(empty, zmq::recv_flags::none);
+    assert(res);
 
     t.join();
 
