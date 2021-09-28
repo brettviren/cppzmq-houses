@@ -64,7 +64,7 @@ void auth(zmq::context_t &ctx, zmq::socket_t& link, char* pub, char* sec)
         else if (mech == "CURVE") {
           auto msg = mp.pop();
           assert(32 == msg.size());
-          char encoded[4];
+          char encoded[41];
           zmq_z85_encode(encoded, msg.data<uint8_t>(), msg.size());
           // ... fixme: actually check
           ok = true;
